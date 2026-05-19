@@ -4,10 +4,13 @@ import { useApp } from '../App.jsx'
 import WeekNavigator from '../components/WeekNavigator.jsx'
 
 function getMondayOfWeek(date = new Date()) {
-  const d = new Date(date)
+  const d = typeof date === 'string' ? new Date(date + 'T00:00:00') : new Date(date)
   const day = d.getDay()
   d.setDate(d.getDate() - day + (day === 0 ? -6 : 1))
-  return d.toISOString().split('T')[0]
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${dd}`
 }
 
 // Module-level so both ItemCard and getRemainingBySize can use it

@@ -8,10 +8,15 @@ function formatWeekLabel(iso) {
 }
 
 function getMondayOfWeek(date = new Date()) {
-  const d = new Date(date)
+  // Always parse date strings as LOCAL midnight (not UTC) to avoid day-shift bugs
+  const d = typeof date === 'string' ? new Date(date + 'T00:00:00') : new Date(date)
   const day = d.getDay()
   d.setDate(d.getDate() - day + (day === 0 ? -6 : 1))
-  return d.toISOString().split('T')[0]
+  // Format as YYYY-MM-DD using local date parts so timezone never shifts the day
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${dd}`
 }
 
 // ── Past Week Modal ────────────────────────────────────────────────────────────
@@ -50,11 +55,17 @@ function PastWeekModal({ onClose, onCreate }) {
                      font-semibold text-gray-800 outline-none focus:ring-2 focus:ring-indigo-300 mb-5"
         />
 
-        {/* Preview which Monday it snaps to */}
+        {/* Preview which Mon–Sun range it snaps to */}
         <div className="bg-indigo-50 rounded-2xl px-4 py-3 mb-5 text-center">
           <p className="text-xs text-indigo-400 font-semibold mb-0.5">Week will be created for</p>
           <p className="text-indigo-700 font-black text-base">
-            {formatWeekLabel(getMondayOfWeek(date))}
+            {(() => {
+              const monday = getMondayOfWeek(date)
+              const sunDate = new Date(monday + 'T00:00:00')
+              sunDate.setDate(sunDate.getDate() + 6)
+              const sunStr = `${sunDate.getFullYear()}-${String(sunDate.getMonth()+1).padStart(2,'0')}-${String(sunDate.getDate()).padStart(2,'0')}`
+              return `${formatWeekLabel(monday)} – ${formatWeekLabel(sunStr)}`
+            })()}
           </p>
         </div>
 

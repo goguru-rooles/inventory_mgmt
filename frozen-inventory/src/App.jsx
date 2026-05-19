@@ -116,10 +116,63 @@ export default function App() {
       .upsert({ week_start: weekStart }, { onConflict: 'week_start' })
       .select().single()
     if (error) { alert('Error creating week: ' + error.message); return null }
+
+    // ── Carry over "now" inventory from the most recent prior session ──────────
+    // Only carry over if this session has no starting_inventory yet (i.e. it's brand new)
+    const { data: existingInv } = await supabase
+      .from('starting_inventory').select('id').eq('session_id', data.id).limit(1)
+
+    if (!existingInv || existingInv.length === 0) {
+      // Find the most recent session that existed before this new week
+      const priorSession = [...allSessions]
+        .filter(s => s.week_start < weekStart)
+        .sort((a, b) => b.week_start.localeCompare(a.week_start))[0]
+
+      if (priorSession) {
+        // Load prior week's starting inventory and transactions in parallel
+        const [{ data: startInv }, { data: txns }] = await Promise.all([
+          supabase.from('starting_inventory').select('item_id, size_id, qty').eq('session_id', priorSession.id),
+          supabase.from('market_transactions').select('item_id, size_id, given, returned, restock').eq('session_id', priorSession.id),
+        ])
+
+        // Build start map: { itemId: { sizeId: qty } }
+        const startMap = {}
+        for (const row of startInv || []) {
+          if (!startMap[row.item_id]) startMap[row.item_id] = {}
+          startMap[row.item_id][row.size_id] = row.qty
+        }
+
+        // Accumulate sold & restock per item+size across all markets
+        const txnMap = {}
+        for (const row of txns || []) {
+          if (!txnMap[row.item_id]) txnMap[row.item_id] = {}
+          if (!txnMap[row.item_id][row.size_id]) txnMap[row.item_id][row.size_id] = { sold: 0, restock: 0 }
+          txnMap[row.item_id][row.size_id].sold    += Math.max(0, (row.given || 0) - (row.returned || 0))
+          txnMap[row.item_id][row.size_id].restock += (row.restock || 0)
+        }
+
+        // nowQty = start - sold + restock  (floor at 0)
+        const carryRows = []
+        for (const itemId of Object.keys(startMap)) {
+          for (const sizeId of Object.keys(startMap[itemId])) {
+            const startQty = startMap[itemId][sizeId] || 0
+            const sold     = txnMap[itemId]?.[sizeId]?.sold    || 0
+            const restock  = txnMap[itemId]?.[sizeId]?.restock || 0
+            const nowQty   = Math.max(0, startQty - sold + restock)
+            carryRows.push({ session_id: data.id, item_id: itemId, size_id: sizeId, qty: nowQty })
+          }
+        }
+        if (carryRows.length > 0) {
+          await supabase.from('starting_inventory').insert(carryRows)
+        }
+      }
+    }
+    // ──────────────────────────────────────────────────────────────────────────
+
     await loadAllSessions(false)
     setCurrentSession(data)
     return data
-  }, [loadAllSessions])
+  }, [loadAllSessions, allSessions])
 
   const goToPrevSession = useCallback(() => {
     const idx = allSessions.findIndex(s => s.id === currentSession?.id)
