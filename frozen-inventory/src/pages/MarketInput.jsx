@@ -73,6 +73,16 @@ function StockLeft({ qty }) {
   )
 }
 
+// ── Allocated-to-other-markets badge ──────────────────────────────────────────
+function AllocatedBadge({ qty }) {
+  if (!qty) return null
+  return (
+    <span className="text-[10px] font-black px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-500">
+      {qty} out
+    </span>
+  )
+}
+
 // ── Tiny stepper ───────────────────────────────────────────────────────────────
 function MiniStepper({ label, value, onChange, accent }) {
   const styles = {
@@ -101,8 +111,9 @@ function MiniStepper({ label, value, onChange, accent }) {
 }
 
 // ── Item card ──────────────────────────────────────────────────────────────────
-// remainingBySize: { [sizeId]: number } — remaining stock across all markets
-function ItemCard({ item, itemSizes, txnBySize, onUpdate, index, isPastWeek, remainingBySize }) {
+// remainingBySize:  { [sizeId]: number } — remaining stock across all markets
+// allocatedBySize:  { [sizeId]: number } — given to OTHER markets this week
+function ItemCard({ item, itemSizes, txnBySize, onUpdate, index, isPastWeek, remainingBySize, allocatedBySize }) {
   // Total sold badge across all sizes (only non-null when any given > 0)
   let totalGiven = 0, totalSold = 0
   for (const size of itemSizes) {
@@ -112,21 +123,25 @@ function ItemCard({ item, itemSizes, txnBySize, onUpdate, index, isPastWeek, rem
   }
   const badgeValue = totalGiven > 0 ? totalSold : null
 
-  // Total remaining across all sizes for the item header
+  // Total remaining + total allocated for the item header
   const hasRemaining = itemSizes.some(sz => remainingBySize[sz.id] !== undefined)
   const totalRemaining = hasRemaining
     ? itemSizes.reduce((s, sz) => s + (remainingBySize[sz.id] ?? 0), 0)
     : null
+  const totalAllocated = itemSizes.reduce((s, sz) => s + (allocatedBySize[sz.id] || 0), 0)
 
   return (
     <div className={`animate-slide-up stagger-${Math.min(index + 1, 5)}
                      bg-white rounded-2xl border border-gray-100 px-3 py-2.5`}>
-      {/* Name + sold + remaining */}
+      {/* Name + sold + remaining + allocated */}
       <div className="flex items-center justify-between mb-1.5">
         <span className="font-semibold text-gray-800 text-sm">{item.name}</span>
         <div className="flex items-center gap-2">
           {totalRemaining !== null && (
             <StockLeft qty={totalRemaining} />
+          )}
+          {totalAllocated > 0 && (
+            <AllocatedBadge qty={totalAllocated} />
           )}
           <div className="flex items-center gap-1">
             <span className="text-xs text-gray-400">sold</span>
@@ -135,7 +150,7 @@ function ItemCard({ item, itemSizes, txnBySize, onUpdate, index, isPastWeek, rem
         </div>
       </div>
 
-      {/* One row per size: label | Given | Returned | → sold | left */}
+      {/* One row per size: label | Given | Returned | → sold | left | out */}
       {itemSizes.map((size, si) => {
         const t        = txnBySize[size.id] || {}
         const given    = t.given    || 0
@@ -144,6 +159,7 @@ function ItemCard({ item, itemSizes, txnBySize, onUpdate, index, isPastWeek, rem
         const sold     = calcSold(given, returned, isPastWeek)
         const labelColor = SIZE_LABEL_COLORS[si % SIZE_LABEL_COLORS.length]
         const remaining  = remainingBySize[size.id]
+        const allocated  = allocatedBySize[size.id] || 0
 
         return (
           <div key={size.id} className="mb-1.5 last:mb-0">
@@ -159,6 +175,9 @@ function ItemCard({ item, itemSizes, txnBySize, onUpdate, index, isPastWeek, rem
                 )}
                 {remaining !== undefined && (
                   <StockLeft qty={remaining} />
+                )}
+                {allocated > 0 && (
+                  <AllocatedBadge qty={allocated} />
                 )}
               </div>
             </div>
@@ -291,6 +310,16 @@ export default function MarketInput() {
     }
     return startQty - totalSold + totalRestock
   }, [startInv, txns])
+
+  // ── Given to OTHER markets (not the currently active one) ─────────────────
+  const getAllocatedElsewhere = useCallback((itemId, sizeId, excludeMarketId) => {
+    let total = 0
+    for (const [marketId, marketTxns] of Object.entries(txns)) {
+      if (marketId === String(excludeMarketId)) continue
+      total += marketTxns[itemId]?.[sizeId]?.given || 0
+    }
+    return total
+  }, [txns])
 
   // ── Print handler ─────────────────────────────────────────────────────────
   const handlePrint = () => {
@@ -462,6 +491,12 @@ td.sold { background: #f0faf4; }
             const r = getRemaining(item.id, size.id, isPastWeek)
             if (r !== undefined) remainingBySize[size.id] = r
           }
+          // Build allocatedBySize — given to OTHER markets this week
+          const allocatedBySize = {}
+          for (const size of itemSizes) {
+            const a = getAllocatedElsewhere(item.id, size.id, activeMarket)
+            if (a > 0) allocatedBySize[size.id] = a
+          }
           return (
             <ItemCard
               key={item.id}
@@ -472,6 +507,7 @@ td.sold { background: #f0faf4; }
               index={idx}
               isPastWeek={isPastWeek}
               remainingBySize={remainingBySize}
+              allocatedBySize={allocatedBySize}
             />
           )
         })}
